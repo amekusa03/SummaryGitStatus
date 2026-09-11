@@ -1,5 +1,6 @@
 """
 Tkinter/ttk GUI interface for SummaryGitStatus application.
+Supports bilingual display (Japanese and English) with dynamic switching.
 """
 
 import os
@@ -11,14 +12,14 @@ from typing import List, Optional
 
 from git_scanner import RepoStatus, scan_repositories_multithreaded, get_repo_status
 import utils
+import i18n
 
 
 class SummaryGitStatus:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Git status viewer - SummaryGitStatus")
-        self.root.geometry("1100x700")
-        self.root.minsize(900, 550)
+        self.root.geometry("1120x700")
+        self.root.minsize(920, 550)
 
         # Application state
         self.repo_list: List[RepoStatus] = []
@@ -27,12 +28,18 @@ class SummaryGitStatus:
         self.scan_queue = queue.Queue()
         self.sort_column = "name"
         self.sort_reverse = False
+        
+        # Internal filter mode: 'all', 'modified', 'clean', 'ahead', 'behind', 'conflict'
+        self.current_filter_mode = "all"
 
         # Apply modern styling
         self._setup_styles()
 
         # Build UI layout
         self._build_ui()
+
+        # Apply initial language strings
+        self._update_ui_language()
 
         # Start queue polling
         self.root.after(100, self._poll_queue)
@@ -53,9 +60,6 @@ class SummaryGitStatus:
         TEXT_FG = "#cdd6f4"
         TEXT_MUTED = "#a6adc8"
         ACCENT_BLUE = "#89b4fa"
-        ACCENT_GREEN = "#a6e3a1"
-        ACCENT_WARN = "#f9e2af"
-        ACCENT_ERR = "#f38ba8"
 
         self.root.configure(bg=BG_COLOR)
 
@@ -115,86 +119,102 @@ class SummaryGitStatus:
         top_container = ttk.Frame(self.root, padding=(16, 12, 16, 8))
         top_container.pack(fill="x")
 
-        # Header Title
-        title_label = ttk.Label(top_container, text=" Git リポジトリ ステータス一覧", style="Header.TLabel")
-        title_label.pack(side="top", anchor="w", pady=(0, 10))
+        # Header Row (Title on left, Language switcher on right)
+        header_row = ttk.Frame(top_container)
+        header_row.pack(fill="x", pady=(0, 10))
+
+        self.title_label = ttk.Label(header_row, text="", style="Header.TLabel")
+        self.title_label.pack(side="left", anchor="w")
+
+        lang_frame = ttk.Frame(header_row)
+        lang_frame.pack(side="right", anchor="e")
+
+        self.lbl_lang = ttk.Label(lang_frame, text="", font=("DejaVu Sans", 9, "bold"))
+        self.lbl_lang.pack(side="left", padx=(0, 6))
+
+        current_lang = i18n.get_language()
+        self.lang_var = tk.StringVar(value="日本語" if current_lang == "ja" else "English")
+        self.lang_combo = ttk.Combobox(
+            lang_frame,
+            textvariable=self.lang_var,
+            values=["日本語", "English"],
+            width=8,
+            state="readonly"
+        )
+        self.lang_combo.pack(side="left")
+        self.lang_combo.bind("<<ComboboxSelected>>", self._on_language_selected)
 
         # Path selection controls
         path_frame = ttk.Frame(top_container, style="Panel.TFrame", padding=10)
         path_frame.pack(fill="x", pady=(0, 10))
 
-        ttk.Label(path_frame, text="親フォルダ:", style="Panel.TLabel", font=("DejaVu Sans", 9, "bold")).pack(side="left", padx=(0, 8))
+        self.lbl_parent_folder = ttk.Label(path_frame, text="", style="Panel.TLabel", font=("DejaVu Sans", 9, "bold"))
+        self.lbl_parent_folder.pack(side="left", padx=(0, 8))
 
         self.dir_entry = ttk.Entry(path_frame, font=("DejaVu Sans", 10))
         self.dir_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self.dir_entry.bind("<Return>", lambda e: self.start_scan())
 
-        browse_btn = ttk.Button(path_frame, text="参照...", command=self._browse_directory)
-        browse_btn.pack(side="left", padx=(0, 12))
+        self.browse_btn = ttk.Button(path_frame, text="", command=self._browse_directory)
+        self.browse_btn.pack(side="left", padx=(0, 12))
 
-        ttk.Label(path_frame, text="探索階層:", style="Panel.TLabel").pack(side="left", padx=(0, 4))
+        self.lbl_search_depth = ttk.Label(path_frame, text="", style="Panel.TLabel")
+        self.lbl_search_depth.pack(side="left", padx=(0, 4))
         self.depth_var = tk.StringVar(value="3")
         depth_combo = ttk.Combobox(path_frame, textvariable=self.depth_var, values=["1", "2", "3", "4", "5"], width=3, state="readonly")
         depth_combo.pack(side="left", padx=(0, 12))
 
-        self.scan_btn = ttk.Button(path_frame, text="🔍 スキャン開始", style="Primary.TButton", command=self.start_scan)
+        self.scan_btn = ttk.Button(path_frame, text="", style="Primary.TButton", command=self.start_scan)
         self.scan_btn.pack(side="left")
 
         # Summary Dashboard Cards
         dash_frame = ttk.Frame(top_container)
         dash_frame.pack(fill="x", pady=(0, 10))
 
-        self.card_total_val = self._create_card(dash_frame, "全リポジトリ", "0", 0)
-        self.card_clean_val = self._create_card(dash_frame, "クリーン", "0", 1, value_color="#a6e3a1")
-        self.card_mod_val = self._create_card(dash_frame, "変更あり / 要対応", "0", 2, value_color="#f9e2af")
-        self.card_push_val = self._create_card(dash_frame, "未Push / 未Pull", "0", 3, value_color="#89b4fa")
+        self.card_total_title_lbl, self.card_total_val = self._create_card(dash_frame, 0)
+        self.card_clean_title_lbl, self.card_clean_val = self._create_card(dash_frame, 1, value_color="#a6e3a1")
+        self.card_mod_title_lbl, self.card_mod_val = self._create_card(dash_frame, 2, value_color="#f9e2af")
+        self.card_push_title_lbl, self.card_push_val = self._create_card(dash_frame, 3, value_color="#89b4fa")
 
         # Filter & Search bar
         filter_frame = ttk.Frame(top_container, style="Panel.TFrame", padding=(10, 8))
         filter_frame.pack(fill="x")
 
-        ttk.Label(filter_frame, text="絞り込み:", style="Panel.TLabel", font=("DejaVu Sans", 9, "bold")).pack(side="left", padx=(0, 8))
+        self.lbl_filter = ttk.Label(filter_frame, text="", style="Panel.TLabel", font=("DejaVu Sans", 9, "bold"))
+        self.lbl_filter.pack(side="left", padx=(0, 8))
         
-        self.filter_var = tk.StringVar(value="すべて")
-        filter_combo = ttk.Combobox(
+        self.filter_var = tk.StringVar()
+        self.filter_combo = ttk.Combobox(
             filter_frame, 
             textvariable=self.filter_var, 
-            values=["すべて", "要対応/変更あり", "クリーン", "未Push (Ahead)", "未Pull (Behind)", "コンフリクト"],
-            width=16,
+            width=22,
             state="readonly"
         )
-        filter_combo.pack(side="left", padx=(0, 16))
-        filter_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_filter())
+        self.filter_combo.pack(side="left", padx=(0, 16))
+        self.filter_combo.bind("<<ComboboxSelected>>", self._on_filter_changed)
 
-        ttk.Label(filter_frame, text="キーワード検索:", style="Panel.TLabel", font=("DejaVu Sans", 9, "bold")).pack(side="left", padx=(0, 8))
+        self.lbl_search = ttk.Label(filter_frame, text="", style="Panel.TLabel", font=("DejaVu Sans", 9, "bold"))
+        self.lbl_search.pack(side="left", padx=(0, 8))
         
         self.search_entry = ttk.Entry(filter_frame, font=("DejaVu Sans", 9))
         self.search_entry.pack(side="left", fill="x", expand=True, padx=(0, 12))
         self.search_entry.bind("<KeyRelease>", lambda e: self.apply_filter())
 
-        reset_filter_btn = ttk.Button(filter_frame, text="リセット", command=self._reset_filters)
-        reset_filter_btn.pack(side="left")
+        self.reset_filter_btn = ttk.Button(filter_frame, text="", command=self._reset_filters)
+        self.reset_filter_btn.pack(side="left")
 
         # Treeview Table Container
         table_container = ttk.Frame(self.root, padding=(16, 0, 16, 8))
         table_container.pack(fill="both", expand=True)
 
-        columns = (
-            ("name", "リポジトリ名", 160),
-            ("branch", "現在のブランチ", 130),
-            ("status", "ステータス", 110),
-            ("changes", "変更内容 (Stage/Unstage/Untrack)", 180),
-            ("sync", "Push/Pull (Ahead/Behind)", 130),
-            ("stash", "Stash", 60),
-            ("last_date", "最終コミット日時", 110),
-            ("last_msg", "最新コミットメッセージ", 200),
-            ("path", "パス", 250),
+        self.tree = ttk.Treeview(
+            table_container,
+            columns=[col[0] for col in i18n.COLUMN_KEYS],
+            show="headings",
+            selectmode="browse"
         )
 
-        self.tree = ttk.Treeview(table_container, columns=[c[0] for c in columns], show="headings", selectmode="browse")
-
-        for col_id, col_name, width in columns:
-            self.tree.heading(col_id, text=col_name, command=lambda c=col_id: self.sort_by_column(c))
+        for col_id, col_key, width in i18n.COLUMN_KEYS:
             self.tree.column(col_id, width=width, anchor="w")
 
         # Scrollbars
@@ -218,7 +238,7 @@ class SummaryGitStatus:
         # Bind events
         self.tree.bind("<Double-1>", self._on_tree_double_click)
         self.tree.bind("<Button-3>", self._show_context_menu)
-        self.tree.bind("<Button-2>", self._show_context_menu)  # For macOS right click
+        self.tree.bind("<Button-2>", self._show_context_menu)  # For macOS
 
         # Bottom Bar (Status & Export)
         bottom_frame = ttk.Frame(self.root, padding=(16, 4, 16, 12))
@@ -230,32 +250,89 @@ class SummaryGitStatus:
         status_bar = ttk.Frame(bottom_frame)
         status_bar.pack(fill="x")
 
-        self.status_label = ttk.Label(status_bar, text="準備完了。親フォルダを指定して「スキャン開始」を押してください。", foreground="#a6adc8")
+        self.status_label = ttk.Label(status_bar, text="", foreground="#a6adc8")
         self.status_label.pack(side="left")
 
-        export_json_btn = ttk.Button(status_bar, text="JSON出力", command=self._export_json)
-        export_json_btn.pack(side="right", padx=(4, 0))
+        self.export_json_btn = ttk.Button(status_bar, text="", command=self._export_json)
+        self.export_json_btn.pack(side="right", padx=(4, 0))
 
-        export_csv_btn = ttk.Button(status_bar, text="CSV出力", command=self._export_csv)
-        export_csv_btn.pack(side="right")
+        self.export_csv_btn = ttk.Button(status_bar, text="", command=self._export_csv)
+        self.export_csv_btn.pack(side="right")
 
-    def _create_card(self, parent, title, initial_val, col, value_color="#cdd6f4") -> ttk.Label:
-        """Create a dashboard summary card widget."""
+    def _create_card(self, parent, col, value_color="#cdd6f4"):
+        """Create a dashboard summary card widget, returning (title_label, val_label)."""
         card = ttk.Frame(parent, style="Card.TFrame", padding=(12, 8))
         card.grid(row=0, column=col, sticky="nsew", padx=4)
         parent.grid_columnconfigure(col, weight=1)
 
-        lbl_title = ttk.Label(card, text=title, style="CardTitle.TLabel")
+        lbl_title = ttk.Label(card, text="", style="CardTitle.TLabel")
         lbl_title.pack(anchor="w")
 
-        lbl_val = ttk.Label(card, text=initial_val, style="CardVal.TLabel", foreground=value_color)
+        lbl_val = ttk.Label(card, text="0", style="CardVal.TLabel", foreground=value_color)
         lbl_val.pack(anchor="w", pady=(2, 0))
-        return lbl_val
+        return lbl_title, lbl_val
+
+    def _on_language_selected(self, event=None):
+        """Handle language switcher combobox selection."""
+        selected_text = self.lang_var.get()
+        new_lang = "ja" if selected_text == "日本語" else "en"
+        i18n.set_language(new_lang)
+        self._update_ui_language()
+
+    def _update_ui_language(self):
+        """Update all dynamic text strings in the UI to match current language."""
+        self.root.title(i18n.t("app_title"))
+        self.title_label.config(text=i18n.t("header_title"))
+        self.lbl_lang.config(text=i18n.t("language_label"))
+        
+        # Path Bar
+        self.lbl_parent_folder.config(text=i18n.t("parent_folder"))
+        self.browse_btn.config(text=i18n.t("browse_btn"))
+        self.lbl_search_depth.config(text=i18n.t("search_depth"))
+        self.scan_btn.config(text=i18n.t("start_scan_btn"))
+        
+        # Cards
+        self.card_total_title_lbl.config(text=i18n.t("card_total"))
+        self.card_clean_title_lbl.config(text=i18n.t("card_clean"))
+        self.card_mod_title_lbl.config(text=i18n.t("card_modified"))
+        self.card_push_title_lbl.config(text=i18n.t("card_push_pull"))
+        
+        # Filter & Search
+        self.lbl_filter.config(text=i18n.t("filter_label"))
+        self.lbl_search.config(text=i18n.t("keyword_search"))
+        self.reset_filter_btn.config(text=i18n.t("reset_btn"))
+        
+        # Rebuild filter options
+        filter_options = [i18n.t(fkey) for fkey, _ in i18n.FILTER_KEYS]
+        self.filter_combo["values"] = filter_options
+        
+        # Keep selected filter index
+        modes = [mode for _, mode in i18n.FILTER_KEYS]
+        idx = modes.index(self.current_filter_mode) if self.current_filter_mode in modes else 0
+        self.filter_var.set(filter_options[idx])
+
+        # Table headings
+        for col_id, col_key, _ in i18n.COLUMN_KEYS:
+            self.tree.heading(col_id, text=i18n.t(col_key), command=lambda c=col_id: self.sort_by_column(c))
+
+        # Bottom Bar
+        self.export_csv_btn.config(text=i18n.t("btn_export_csv"))
+        self.export_json_btn.config(text=i18n.t("btn_export_json"))
+
+        # Status label update if in initial state or finished state
+        if not self.is_scanning:
+            if not self.repo_list:
+                self.status_label.config(text=i18n.t("status_ready"))
+            else:
+                self.status_label.config(text=i18n.t("status_scan_complete", total=len(self.repo_list)))
+
+        # Refresh table rows to translate statuses
+        self._refresh_tree_display()
 
     def _browse_directory(self):
         """Open directory dialog."""
         initial = self.dir_entry.get() or os.path.expanduser("~")
-        chosen = filedialog.askdirectory(initialdir=initial, title="探索する親フォルダを選択")
+        chosen = filedialog.askdirectory(initialdir=initial, title=i18n.t("select_folder_dialog"))
         if chosen:
             self.dir_entry.delete(0, tk.END)
             self.dir_entry.insert(0, chosen)
@@ -265,7 +342,7 @@ class SummaryGitStatus:
         """Start asynchronous multithreaded scanning."""
         target_dir = self.dir_entry.get().strip()
         if not target_dir or not os.path.exists(target_dir):
-            messagebox.showwarning("入力エラー", "有効なフォルダパスを指定してください。")
+            messagebox.showwarning(i18n.t("dialog_input_error"), i18n.t("dialog_invalid_dir"))
             return
 
         if self.is_scanning:
@@ -279,9 +356,8 @@ class SummaryGitStatus:
         self._update_cards(0, 0, 0, 0)
 
         max_depth = int(self.depth_var.get())
-        self.status_label.config(text=f"リポジトリ探索中: {target_dir} ...")
+        self.status_label.config(text=i18n.t("status_scanning_dir", dir=target_dir))
 
-        # Launch scanning thread
         def worker():
             def progress_cb(completed, total, repo_status):
                 self.scan_queue.put(("PROGRESS", completed, total, repo_status))
@@ -307,7 +383,9 @@ class SummaryGitStatus:
                     self.repo_list.append(repo_status)
                     pct = (completed / total) * 100 if total > 0 else 100
                     self.progress_bar["value"] = pct
-                    self.status_label.config(text=f"スキャン中 ({completed}/{total}): {repo_status.name}")
+                    self.status_label.config(
+                        text=i18n.t("status_scanning_progress", completed=completed, total=total, name=repo_status.name)
+                    )
                     self.apply_filter()
 
                 elif msg_type == "DONE":
@@ -316,7 +394,7 @@ class SummaryGitStatus:
                     self.is_scanning = False
                     self.scan_btn.config(state="normal")
                     self.progress_bar["value"] = 100
-                    self.status_label.config(text=f"スキャン完了: 全 {len(self.repo_list)} 個のリポジトリを検出しました。")
+                    self.status_label.config(text=i18n.t("status_scan_complete", total=len(self.repo_list)))
                     self.apply_filter()
 
         except queue.Empty:
@@ -324,10 +402,16 @@ class SummaryGitStatus:
 
         self.root.after(100, self._poll_queue)
 
+    def _on_filter_changed(self, event=None):
+        """Update current filter mode based on combobox selection index."""
+        idx = self.filter_combo.current()
+        if 0 <= idx < len(i18n.FILTER_KEYS):
+            self.current_filter_mode = i18n.FILTER_KEYS[idx][1]
+        self.apply_filter()
+
     def apply_filter(self):
         """Filter and update the table display."""
         search_kw = self.search_entry.get().strip().lower()
-        filter_opt = self.filter_var.get()
 
         self.filtered_repos = []
         clean_cnt = 0
@@ -354,16 +438,16 @@ class SummaryGitStatus:
                 if not kw_match:
                     continue
 
-            # Match dropdown filter
-            if filter_opt == "要対応/変更あり" and r.is_clean:
+            # Match filter mode
+            if self.current_filter_mode == "modified" and r.is_clean:
                 continue
-            elif filter_opt == "クリーン" and not r.is_clean:
+            elif self.current_filter_mode == "clean" and not r.is_clean:
                 continue
-            elif filter_opt == "未Push (Ahead)" and r.ahead == 0:
+            elif self.current_filter_mode == "ahead" and r.ahead == 0:
                 continue
-            elif filter_opt == "未Pull (Behind)" and r.behind == 0:
+            elif self.current_filter_mode == "behind" and r.behind == 0:
                 continue
-            elif filter_opt == "コンフリクト" and r.conflicts == 0:
+            elif self.current_filter_mode == "conflict" and r.conflicts == 0:
                 continue
 
             self.filtered_repos.append(r)
@@ -381,38 +465,39 @@ class SummaryGitStatus:
     def _reset_filters(self):
         """Reset search entry and filter dropdown."""
         self.search_entry.delete(0, tk.END)
-        self.filter_var.set("すべて")
+        self.current_filter_mode = "all"
+        self.filter_combo.current(0)
         self.apply_filter()
 
     def _refresh_tree_display(self):
-        """Populate treeview rows based on current filtered_repos."""
+        """Populate treeview rows based on current filtered_repos and locale."""
         self.tree.delete(*self.tree.get_children())
 
         for r in self.filtered_repos:
             if r.error:
-                status_str = "❌ エラー"
+                status_str = i18n.t("status_error")
                 changes_str = r.error
                 sync_str = "-"
                 tag = "error"
             elif r.is_clean:
-                status_str = "✅ Clean"
-                changes_str = "なし (変更ゼロ)"
+                status_str = i18n.t("status_clean")
+                changes_str = i18n.t("status_clean_desc")
                 tag = "clean"
             else:
                 status_parts = []
-                if r.conflicts > 0: status_parts.append(f"競合:{r.conflicts}")
-                if r.staged > 0: status_parts.append(f"Stage:{r.staged}")
-                if r.unstaged > 0: status_parts.append(f"Unstage:{r.unstaged}")
-                if r.untracked > 0: status_parts.append(f"Untrack:{r.untracked}")
+                if r.conflicts > 0: status_parts.append(f"{i18n.t('tag_conflict')}:{r.conflicts}")
+                if r.staged > 0: status_parts.append(f"{i18n.t('tag_stage')}:{r.staged}")
+                if r.unstaged > 0: status_parts.append(f"{i18n.t('tag_unstage')}:{r.unstaged}")
+                if r.untracked > 0: status_parts.append(f"{i18n.t('tag_untrack')}:{r.untracked}")
                 
-                status_str = "⚠️ 変更あり"
+                status_str = i18n.t("status_modified")
                 changes_str = " / ".join(status_parts)
                 tag = "conflict" if r.conflicts > 0 else "modified"
 
             sync_parts = []
-            if r.ahead > 0: sync_parts.append(f"⬆ Ahead {r.ahead}")
-            if r.behind > 0: sync_parts.append(f"⬇ Behind {r.behind}")
-            sync_str = " / ".join(sync_parts) if sync_parts else "同期済み"
+            if r.ahead > 0: sync_parts.append(i18n.t("sync_ahead", n=r.ahead))
+            if r.behind > 0: sync_parts.append(i18n.t("sync_behind", n=r.behind))
+            sync_str = " / ".join(sync_parts) if sync_parts else i18n.t("sync_synced")
 
             item_values = (
                 r.name,
@@ -474,12 +559,12 @@ class SummaryGitStatus:
                 return
 
             menu = tk.Menu(self.root, tearoff=0, bg="#252538", fg="#cdd6f4", activebackground="#45475a", activeforeground="#ffffff")
-            menu.add_command(label=f"📁 フォルダを開く ({repo.name})", command=lambda: utils.open_in_file_manager(repo.path))
-            menu.add_command(label="💻 ターミナルで開く", command=lambda: utils.open_in_terminal(repo.path))
-            menu.add_command(label="📝 VS Codeで開く", command=lambda: utils.open_in_vscode(repo.path))
+            menu.add_command(label=i18n.t("menu_open_folder", name=repo.name), command=lambda: utils.open_in_file_manager(repo.path))
+            menu.add_command(label=i18n.t("menu_open_terminal"), command=lambda: utils.open_in_terminal(repo.path))
+            menu.add_command(label=i18n.t("menu_open_vscode"), command=lambda: utils.open_in_vscode(repo.path))
             menu.add_separator()
-            menu.add_command(label="🔄 このリポジトリのみ状態再更新", command=lambda: self._refresh_single_repo(repo))
-            menu.add_command(label="📋 パスをコピー", command=lambda: self._copy_to_clipboard(repo.path))
+            menu.add_command(label=i18n.t("menu_refresh_repo"), command=lambda: self._refresh_single_repo(repo))
+            menu.add_command(label=i18n.t("menu_copy_path"), command=lambda: self._copy_to_clipboard(repo.path))
             menu.tk_popup(event.x_root, event.y_root)
 
     def _refresh_single_repo(self, repo: RepoStatus):
@@ -490,30 +575,36 @@ class SummaryGitStatus:
                 self.repo_list[i] = new_status
                 break
         self.apply_filter()
-        self.status_label.config(text=f"リポジトリ '{repo.name}' のステータスを更新しました。")
+        self.status_label.config(text=i18n.t("status_refreshed_repo", name=repo.name))
 
     def _copy_to_clipboard(self, text: str):
         """Copy text to system clipboard."""
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
-        self.status_label.config(text=f"クリップボードにコピーしました: {text}")
+        self.status_label.config(text=i18n.t("status_copied", text=text))
 
     def _export_csv(self):
         """Export list to CSV file dialog."""
         if not self.filtered_repos:
-            messagebox.showinfo("情報", "出力するリポジトリデータがありません。")
+            messagebox.showinfo(i18n.t("dialog_info"), i18n.t("dialog_no_data"))
             return
-        fpath = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV File", "*.csv")])
+        fpath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[(i18n.t("file_type_csv"), "*.csv")]
+        )
         if fpath:
             utils.export_to_csv(self.filtered_repos, fpath)
-            messagebox.showinfo("成功", f"CSVファイルを保存しました:\n{fpath}")
+            messagebox.showinfo(i18n.t("dialog_success"), i18n.t("dialog_saved_csv", path=fpath))
 
     def _export_json(self):
         """Export list to JSON file dialog."""
         if not self.filtered_repos:
-            messagebox.showinfo("情報", "出力するリポジトリデータがありません。")
+            messagebox.showinfo(i18n.t("dialog_info"), i18n.t("dialog_no_data"))
             return
-        fpath = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON File", "*.json")])
+        fpath = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[(i18n.t("file_type_json"), "*.json")]
+        )
         if fpath:
             utils.export_to_json(self.filtered_repos, fpath)
-            messagebox.showinfo("成功", f"JSONファイルを保存しました:\n{fpath}")
+            messagebox.showinfo(i18n.t("dialog_success"), i18n.t("dialog_saved_json", path=fpath))

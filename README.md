@@ -1,50 +1,56 @@
-# 📁 SummaryGitStatus (Gitリポジトリステータス自動検出・一覧表示GUI)
+# 📁 SummaryGitStatus
 
-指定した親フォルダ配下にある複数の Git リポジトリを自動探索し、各リポジトリの**現在のブランチ名**、**変更状態（Staged / Unstaged / Untracked / Conflict）**、**Push/Pull同期状態（Ahead/Behind）**、**最新コミット情報**を一覧で確認・操作できる Python 製 GUI アプリケーションです。
+[English](README.md) | [日本語](README.ja.md)
 
----
-
-## 🌟 特徴・機能一覧
-
-- **⚡ 高速マルチスレッド自動探索**
-  - 親フォルダ配下の Git リポジトリ（`.git`）を並列処理で高速検索。
-  - 探索階層（1〜5階層）のカスタマイズ可能。
-  - 大量のリポジトリをスキャン中も GUI が停止しない非同期設計。
-
-- **📊 ダッシュボード・ステータス表示**
-  - リポジトリ総数、クリーンな状態、変更あり（要対応）、未Push/未Pull 数のリアルタイムサマリーカード表示。
-  - ステータスごとにわかりやすく色分けタグ表示（緑: クリーン、黄: 変更あり、赤: コンフリクト）。
-
-- **🔍 インクリメンタル検索 & フィルタリング**
-  - キーワード入力によるリアルタイム絞り込み（リポジトリ名・ブランチ名・パス・コミットメッセージ）。
-  - ステータスフィルター（「すべて」「要対応/変更あり」「クリーン」「未Push (Ahead)」「未Pull (Behind)」「コンフリクト」）。
-  - テーブルの各ヘッダーをクリックして昇順・降順ソート。
-
-- **🖱️ 便利なアクション & 右クリックメニュー**
-  - ダブルクリック: ファイルマネージャーでフォルダを開く。
-  - 右クリックメニュー:
-    - 📁 フォルダを開く (File Manager)
-    - 💻 ターミナルで開く (Terminal)
-    - 📝 VS Codeで開く (VS Code)
-    - 🔄 個別リポジトリのステータス再更新
-    - 📋 パスのコピー
-
-- **💾 データ出力（エクスポート）**
-  - 検出・絞り込みした結果を **CSV** または **JSON** 形式で出力保存可能。
-
-- **📦 依存パッケージなし**
-  - Python 標準ライブラリ (`tkinter`, `ttk`, `subprocess`, `concurrent.futures`) のみで動作。追加の `pip install` は不要です。
+**SummaryGitStatus** is a lightweight, cross-platform Python GUI application that automatically discovers and inspects multiple Git repositories under a designated parent folder. It provides a real-time overview of current branch names, working tree changes (Staged / Unstaged / Untracked / Conflicts), push/pull synchronization states (Ahead / Behind), and latest commit details.
 
 ---
 
-## 🚀 起動方法
+## 🌟 Key Features
 
-### 前提条件
-- Python 3.7 以上
-- Git コマンドラインツールがインストールされていること (`git` コマンドが動作すること)
+- **⚡ Fast Multi-Threaded Scanning**
+  - Recursively discovers `.git` repositories under a parent folder using parallel threads.
+  - Configurable search depth (1 to 5 levels).
+  - Fully asynchronous UI that remains smooth and responsive even with hundreds of repositories.
 
-### 実行
-ターミナルで本プロジェクトのフォルダに移動し、以下のコマンドを実行します。
+- **🌐 Bilingual Support (English & Japanese)**
+  - Instantly toggle between English and Japanese via the language selector in the top-right corner.
+  - Automatically defaults to system locale.
+
+- **📊 Dashboard & Status Summary Cards**
+  - Live summary counters: Total Repositories, Clean, Modified / Needs Attention, and Unpushed / Unpulled.
+  - Color-coded status tags (Green: Clean, Yellow: Modified, Red: Conflict, Gray: Error).
+
+- **🔍 Incremental Search & Filter**
+  - Real-time search filtering across repository name, branch, path, and last commit message.
+  - Quick filter presets: *All*, *Needs Attention / Modified*, *Clean*, *Unpushed (Ahead)*, *Unpulled (Behind)*, and *Conflicts*.
+  - Sort table by clicking any column header (ascending / descending).
+
+- **🖱️ Convenient Actions & Context Menu**
+  - Double-click any row to open the folder in your system file manager.
+  - Right-click context menu:
+    - 📁 Open in File Manager
+    - 💻 Open in Terminal
+    - 📝 Open in VS Code
+    - 🔄 Refresh Single Repo Status
+    - 📋 Copy Path to Clipboard
+
+- **💾 Data Export**
+  - Export filtered results directly to **CSV** or **JSON** formats.
+
+- **📦 Zero External Dependencies**
+  - Built entirely with Python's standard library (`tkinter`, `ttk`, `subprocess`, `concurrent.futures`). No `pip install` required!
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Python 3.7 or higher
+- Git CLI installed and available in your `PATH`
+
+### Run
+Clone the repository and run `main.py`:
 
 ```bash
 python3 main.py
@@ -52,13 +58,21 @@ python3 main.py
 
 ---
 
-## 📁 プロジェクト構造
+## 📁 Project Structure
 
 ```
-GetGitStatus/
-├── main.py              # アプリケーション起動エントリポイント
-├── git_scanner.py       # Gitリポジトリ探索・ステータス解析モジュール
-├── app_gui.py           # Tkinter/ttk GUI画面構築および動作制御
-├── utils.py             # 外部ツール起動（フォルダ・ターミナル・VS Code）・エクスポート処理
-└── README.md            # 本ドキュメント
+SummaryGitStatus/
+├── main.py              # Application entry point
+├── app_gui.py           # Tkinter/ttk GUI interface and logic
+├── git_scanner.py       # Git repository discovery & status inspection module
+├── i18n.py              # Internationalization (i18n) module (EN / JA)
+├── utils.py             # External tool launchers & export utilities
+├── README.md            # Documentation (English)
+└── README.ja.md         # Documentation (Japanese)
 ```
+
+---
+
+## 📄 License
+
+MIT License
